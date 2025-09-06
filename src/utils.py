@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 import cv2
+import imageio
 import matplotlib.colors as mcolors
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
@@ -16,9 +17,7 @@ from PIL import Image
 from tqdm import tqdm
 
 sys.path.append("..")
-from bsldict.download_videos import download_hosted_video, download_youtube_video
-from models.i3d_mlp import i3d_mlp
-from models.i3d import InceptionI3d
+from src.models.i3d_mlp import i3d_mlp
 
 
 def viz_similarities(
@@ -29,7 +28,8 @@ def viz_similarities(
     keyword: str,
     output_path: Path,
     viz_with_dict: bool,
-    dict_video_links: tuple,
+    dict_video_ids: list,
+    dict_video_path: str,
 ):
     """
     Save a visualization video for similarities
@@ -71,15 +71,13 @@ def viz_similarities(
     plt.legend([f"v{v + 1}" for v in range(num_versions)], loc="upper right")
     if viz_with_dict:
         res = 256
-        dict_video_urls, dict_youtube_ids = dict_video_links
-        num_dicts = len(dict_video_urls)
+        num_dicts = len(dict_video_ids)
         stacked_dicts = np.zeros((num_dicts, res, res, 3))
-        for v, dict_vid_url in enumerate(dict_video_urls):
+        for v, dict_vid_id in enumerate(dict_video_ids):
             dict_color = sim_plots[v].get_color()
             # dict_color = list(mcolors.TABLEAU_COLORS.values())[0]
-            yid = dict_youtube_ids[v]
             dict_frame = get_dictionary_frame(
-                dict_vid_url, yid, v=f"v{v + 1}", color=dict_color, res=res
+                dict_vid_id, dict_video_path, v=f"v{v + 1}", color=dict_color, res=res
             )
             stacked_dicts[v] = dict_frame
         dict_viz = np.hstack(stacked_dicts)
@@ -90,11 +88,12 @@ def viz_similarities(
         dh = 0
 
     # Create videowriter
+    output_path = str(output_path)
     print(f"Saving visualization to {output_path}")
+    os.makedirs("frames", exist_ok=True)
     FOURCC = "mp4v"
     fourcc = cv2.VideoWriter_fourcc(*FOURCC)
-    out_video = cv2.VideoWriter(str(output_path), fourcc, 25, (figw, figh + dh))
-
+    frames = []
     for t in tqdm(range(num_frames)):
         img = cv2.resize(im_to_numpy(rgb[:, t]), (256, 256))
         ax1.imshow(img)
@@ -137,15 +136,17 @@ def viz_similarities(
         fig_img = np.array(Image.fromarray(fig_img))
         if viz_with_dict:
             fig_img = np.vstack((dict_viz, fig_img))
-        out_video.write(fig_img[:, :, (2, 1, 0)].astype("uint8"))
-        # cv2.imwrite(f"frames/frame_{t:04d}.png", fig_img[:, :, (2, 1, 0)].astype("uint8"))
+        frames.append(fig_img[:, :, :].astype("uint8"))
         ax1.clear()
         time_line.remove()
         time_rect.remove()
-    out_video.release()
-    msg = (f"Did not find a generated video at {output_path}, is the FOURCC {FOURCC} "
+
+    imageio.mimwrite(output_path.replace('.gif', '.similarities.gif'), frames, fps=25, loop=0)
+    os.system('rm -rf frames/*.png')
+    print(f"Saved visualization video to {output_path.replace('.gif', '.similarities.gif')}")
+    msg = (f"Did not find a generated video at {output_path.replace('.gif', '.similarities.gif')}, is the FOURCC {FOURCC} "
            f"supported by your opencv install?")
-    assert output_path.exists(), msg
+    assert os.path.exists(output_path.replace('.gif', '.similarities.gif')), msg
 
 
 def fig2data(fig):
@@ -157,12 +158,13 @@ def fig2data(fig):
     # draw the renderer
     fig.canvas.draw()
     w, h = fig.canvas.get_width_height()
-    buf = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep="")
-    buf = buf.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    buf = np.fromstring(fig.canvas.tostring_argb(), dtype=np.uint8, sep="")
+    buf = buf.reshape(fig.canvas.get_width_height()[::-1] + (4,))
+    buf = buf[:, :, 1:]
     return buf
 
 
-def get_dictionary_frame(url, yid, v, color, res=256, rm_download=True):
+def get_dictionary_frame(video_id, video_path, v, color, res=256, rm_download=True):
     """
     1) Download the dictionary video to a temporary file location
         (with youtube-dl if it has a youtube-identifier, otherwise with wget),
@@ -183,15 +185,8 @@ def get_dictionary_frame(url, yid, v, color, res=256, rm_download=True):
     try:
         # Temporary file location
         # tmp = f"tmp_{time.time()}.mp4"
-        tmp = f"tmp-{v}.mp4"
-        if yid:
-            # Download with youtube-dl
-            download_youtube_video(yid, tmp)
-        else:
-            # Download with wget
-            download_hosted_video(url, tmp)
         # Read the video
-        cap = cv2.VideoCapture(tmp)
+        cap = cv2.VideoCapture(os.path.join(video_path, f'{video_id}.gif'))
         # Get the total number of frames
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         # Read the middle frame
@@ -210,9 +205,6 @@ def get_dictionary_frame(url, yid, v, color, res=256, rm_download=True):
         )
         # BGR => RGB
         frame = frame[:, :, [2, 1, 0]]
-        if rm_download:
-            # Remove temporary download
-            os.remove(tmp)
         return frame
     except:
         print(f"Could not download dictionary video {url}")
@@ -287,7 +279,7 @@ def prepare_input(
     for t in range(iF):
         tmp = rgb[:, t, :, :]
         rgb_resized[t] = cv2.resize(im_to_numpy(tmp), (resize_res, resize_res))
-
+        
     rgb = np.transpose(rgb_resized, (3, 0, 1, 2))
     # Center crop coords
     ulx = int((resize_res - inp_res) / 2)
@@ -303,12 +295,7 @@ def prepare_input(
 def load_model(checkpoint_path: Path, arch: str) -> torch.nn.Module:
     """Load pre-trained checkpoint, put in eval mode.
     """
-    if arch == "i3d_mlp":
-        model = i3d_mlp()
-    elif arch == "i3d":
-        model = InceptionI3d(num_classes=2281, num_in_frames=16, include_embds=True)
-    else:
-        raise ValueError(f"Unrecognized architecture {arch}")
+    model = i3d_mlp()
     checkpoint = torch.load(str(checkpoint_path))
     if arch == "i3d":
         model = torch.nn.DataParallel(model)  # .cuda()
@@ -410,7 +397,8 @@ def viz_slide(
     keyword: str,
     output_path: Path,
     viz_with_dict: bool,
-    dict_video_links: tuple,
+    dict_video_path: str,
+    dict_video_ids: tuple,
     max_num_versions: int = 1,
 ):
     viz_with_dict = 0
@@ -430,7 +418,6 @@ def viz_slide(
     num_frames = rgb.shape[1]
     height = rgb.shape[2]
     offset = height / 14
-    dict_video_urls, dict_youtube_ids = dict_video_links
     num_versions = sim.shape[1]
     ## delete this hack
     # sim = sim[:, (3, 0, 1, 2, 3)]
@@ -438,8 +425,8 @@ def viz_slide(
     if num_versions > max_num_versions:
         sim = sim[:, :max_num_versions]
         num_versions = sim.shape[1]
-        dict_video_urls = dict_video_urls[:max_num_versions]
-        dict_youtube_ids = dict_youtube_ids[:max_num_versions]
+        dict_video_ids = dict_video_ids[:max_num_versions]
+        
     fig = plt.figure(figsize=(6, 3 + num_versions * 3))
     # 900, 300
     figw, figh = fig.get_size_inches() * fig.dpi
@@ -447,10 +434,10 @@ def viz_slide(
     gs = gridspec.GridSpec(num_versions + 1, 1, height_ratios=[3] + num_versions * [1])
     ax1 = plt.subplot(gs[0])
     res = 256
-    num_dicts = len(dict_video_urls)
+    num_dicts = len(dict_video_ids)
     stacked_dicts = np.zeros((num_dicts, res, res, 3))
     assert num_dicts == num_versions
-    for v, dict_vid_url in enumerate(dict_video_urls):
+    for v, dict_vid_id in enumerate(dict_video_ids):
         dict_color = list(mcolors.TABLEAU_COLORS.values())[v]
         ax2 = plt.subplot(gs[v + 1])
         sim_plot = ax2.plot(range(int(F / 2), int(F / 2) + sim.shape[0]), sim[:, v], color=dict_color)
@@ -462,11 +449,10 @@ def viz_slide(
         if num_versions > 1:
             plt.legend([f"v{v + 1}"], loc="upper right")
             plt.savefig(f"plot-{v+1}-withlegend.png")
-
+    
         # dict_color = sim_plot[0].get_color()
-        yid = dict_youtube_ids[v]
         dict_frame = get_dictionary_frame(
-            dict_vid_url, yid, v=f"v{v + 1}", color=dict_color, res=res, rm_download=False
+            dict_vid_id, dict_video_path, v=f"v{v + 1}", color=dict_color, res=res, rm_download=False
         )
         stacked_dicts[v] = dict_frame
     if viz_with_dict:
@@ -479,12 +465,10 @@ def viz_slide(
         # dh = 0
         dw = 0
 
-    # Create videowriter
+    #output_path = str(output_path) Create videowriter
     print(f"Saving visualization to {output_path}")
-    FOURCC = "mp4v"
-    fourcc = cv2.VideoWriter_fourcc(*FOURCC)
-    out_video = cv2.VideoWriter(str(output_path), fourcc, 25, (figw + dw, figh))
-
+    frames = []
+    os.makedirs("frames", exist_ok=True)
     for t in tqdm(range(num_frames)):
         img = cv2.resize(im_to_numpy(rgb[:, t]), (256, 256))
         ax1.imshow(img)
@@ -538,13 +522,15 @@ def viz_slide(
         fig_img = np.array(Image.fromarray(fig_img))
         if viz_with_dict:
             fig_img = np.hstack((dict_viz, fig_img))
-        out_video.write(fig_img[:, :, (2, 1, 0)].astype("uint8"))
-        cv2.imwrite(f"frames/frame_{t:04d}.png", fig_img[:, :, (2, 1, 0)].astype("uint8"))
+        frames.append(fig_img[:, :, :].astype("uint8"))
         ax1.clear()
         for v in range(num_dicts):
             time_lines[v].remove()
             time_rects[v].remove()
-    out_video.release()
-    msg = (f"Did not find a generated video at {output_path}, is the FOURCC {FOURCC} "
-           f"supported by your opencv install?")
-    assert output_path.exists(), msg
+
+    output_path = str(output_path)
+    out_pth = output_path.replace('.gif', '.slide.gif')
+    imageio.mimwrite(out_pth, frames, fps=25, loop=0)
+    os.system('rm -rf frames/*.png')
+    msg = (f"Did not find a generated video at {out_pth}")
+    assert os.path.exists(out_pth), msg
