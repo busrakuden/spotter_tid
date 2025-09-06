@@ -2,11 +2,7 @@
 
 The repository for sign language spotting on BUTID dataset
 
-## Examples
-
-![Demo](outputs/A0a8r-gawRA_out.similarities.gif)
-![Demo](outputs/SÖYLEMEK_out.similarities.gif)
-![Demo](outputs/YAPMAK_out.similarities.gif)
+### How To Run
 
 ```bash
 python demo.py \
@@ -17,3 +13,10 @@ python demo.py \
     --similarity_thres 0.7
 
 ```
+
+## Examples
+
+![Demo](outputs/A0a8r-gawRA_out.similarities.gif)
+![Demo](outputs/SÖYLEMEK_out.similarities.gif)
+![Demo](outputs/YAPMAK_out.similarities.gif)
+
