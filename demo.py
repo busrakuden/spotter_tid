@@ -93,6 +93,7 @@ def main(
     dict_video_ids = np.array(bsldict_metadata["video_ids"])[dict_ix]
 
     msg = "Please download the pretrained model at models/download_models.sh"
+    print(f"checkpoint_path: {checkpoint_path}")
     assert checkpoint_path.exists(), msg
     print(f"Loading model from {checkpoint_path}")
     model = load_model(checkpoint_path=checkpoint_path, arch=arch)
@@ -182,7 +183,7 @@ if __name__ == "__main__":
     p.add_argument(
         "--checkpoint_path",
         type=Path,
-        default="../../models/i3d/i3d_mlp.pth.tar",
+        default="models/i3d/i3d_mlp.pth.tar",
         help="Path to combined i3d_mlp model.",
     )
     p.add_argument(
@@ -228,7 +229,7 @@ if __name__ == "__main__":
     p.add_argument(
         "--dict_video_path",
         type=str,
-        default="/home/ks0085/Documents/notebooks/butid/dictionary/rgb/tid_sozluk/",
+        default="data/butid/dictionary/rgb/tid_sozluk/",
         help="Path to the folder containing dictionary videos.",
     )
     p.add_argument(
