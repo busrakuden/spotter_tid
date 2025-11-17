@@ -75,6 +75,7 @@ def viz_similarities(
         stacked_dicts = np.zeros((num_dicts, res, res, 3))
         for v, dict_vid_id in enumerate(dict_video_ids):
             dict_color = sim_plots[v].get_color()
+            print(f"dict_video_path: {dict_video_path}")
             # dict_color = list(mcolors.TABLEAU_COLORS.values())[0]
             dict_frame = get_dictionary_frame(
                 dict_vid_id, dict_video_path, v=f"v{v + 1}", color=dict_color, res=res
@@ -224,7 +225,9 @@ def load_rgb_video(video_path: Path, fps: int) -> torch.Tensor:
     # cv2 won't be able to change frame rates for all encodings, so we use ffmpeg
     if cap_fps != fps:
         tmp_video_path = f"{video_path}.tmp.{video_path.suffix}"
-        shutil.move(video_path, tmp_video_path)
+        print(f"video_path: {video_path}")
+        print(f"video_path: {video_path.suffix}")
+        shutil.copy(video_path, tmp_video_path)
         cmd = (
             f"ffmpeg -i {tmp_video_path} -pix_fmt yuv420p "
             f"-filter:v fps=fps={fps} {video_path}"
@@ -449,7 +452,7 @@ def viz_slide(
         if num_versions > 1:
             plt.legend([f"v{v + 1}"], loc="upper right")
             plt.savefig(f"plot-{v+1}-withlegend.png")
-    
+        print(f"dict_video_path: {dict_video_path}")
         # dict_color = sim_plot[0].get_color()
         dict_frame = get_dictionary_frame(
             dict_vid_id, dict_video_path, v=f"v{v + 1}", color=dict_color, res=res, rm_download=False
