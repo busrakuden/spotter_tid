@@ -17,6 +17,7 @@ import scipy.io as sio
 import torch
 from sklearn.metrics import pairwise_distances
 from tqdm import tqdm
+import pandas as pd
 
 from src.utils import (
     load_model,
@@ -82,8 +83,35 @@ def main(
     msg = "Please download the BSLDict metadata at bsldict/download_bsldict_metadata.sh"
     # assert bsldict_metadata_path.exists(), msg
     print(f"Loading BSLDict data (words & features) from {bsldict_metadata_path}")
-    bsldict_metadata = torch.load(bsldict_metadata_path, weights_only=False)
+    #bsldict_metadata = torch.load(bsldict_metadata_path, weights_only=False)
+    bsldict_metadata = torch.load(bsldict_metadata_path, map_location=torch.device('cpu'), weights_only=False)
     msg = f"Search item '{keyword} does not exist in the sign dictionary."
+
+    # --- YAMA: Metadata yoksa CSV'den yükle ---
+    
+    # Eğer glosses yoksa ve class_to_idx de yoksa, CSV'ye git
+    '''if "glosses" not in bsldict_metadata and "class_to_idx" not in bsldict_metadata:
+        print("Model dosyasında kelime listesi bulunamadı. dictionary.csv kullanılıyor...")
+        
+        # CSV dosyasının yolunu buraya tam ver (demo.py nerede çalışıyorsa ona göre)
+        csv_path = "data/dictionary.csv" # Veya "dictionary.csv"
+        
+        try:
+            df = pd.read_csv(csv_path)
+            # Alfabetik sıraya dizip listeyi al (Eğitimdeki mantıkla aynı olmalı)
+            glosses_list = sorted(df['gloss'].unique())
+            bsldict_metadata = {"glosses": glosses_list} # Yapay metadata oluştur
+            print(f"CSV'den {len(glosses_list)} kelime yüklendi.")
+        except Exception as e:
+            print(f"HATA: dictionary.csv okunamadı! Yol: {csv_path}. Hata: {e}")
+            exit()
+            
+    # Eğer class_to_idx varsa ama glosses yoksa (Önceki fix)
+    elif "glosses" not in bsldict_metadata and "class_to_idx" in bsldict_metadata:
+        bsldict_metadata["glosses"] = list(bsldict_metadata["class_to_idx"].keys())'''
+
+    # --- YAMA BİTİŞ ---
+
     assert keyword in bsldict_metadata["glosses"], msg
 
     # Find dictionary videos whose sign corresponds to the search key
