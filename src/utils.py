@@ -16,7 +16,6 @@ from matplotlib import gridspec
 from PIL import Image
 from tqdm import tqdm
 
-sys.path.append("..")
 from src.models.i3d_mlp import i3d_mlp
 
 
@@ -229,7 +228,7 @@ def load_rgb_video(video_path: Path, fps: int) -> torch.Tensor:
         print(f"video_path: {video_path.suffix}")
         shutil.copy(video_path, tmp_video_path)
         cmd = (
-            f"ffmpeg -i {tmp_video_path} -pix_fmt yuv420p "
+            f"ffmpeg -y -i {tmp_video_path} -pix_fmt yuv420p "
             f"-filter:v fps=fps={fps} {video_path}"
         )
         print(f"Generating new copy of video with frame rate {fps}")
@@ -299,10 +298,20 @@ def load_model(checkpoint_path: Path, arch: str) -> torch.nn.Module:
     """Load pre-trained checkpoint, put in eval mode.
     """
     model = i3d_mlp()
-    checkpoint = torch.load(str(checkpoint_path))
+
+    checkpoint = torch.load(str(checkpoint_path), map_location='cpu', weights_only=False)
+
+    # --- DÜZELTME BAŞLANGICI ---
+    if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+        print("Checkpoint içinden 'model_state_dict' ayıklanıyor...")
+        checkpoint = checkpoint["model_state_dict"]
+    # --- DÜZELTME BİTİŞİ ---
+
     if arch == "i3d":
         model = torch.nn.DataParallel(model)  # .cuda()
-        checkpoint = checkpoint["state_dict"]
+        if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
+            checkpoint = checkpoint["state_dict"]
+
     model.load_state_dict(checkpoint)
     model.eval()
     return model
@@ -391,7 +400,7 @@ def color_normalize(x, mean, std):
         x[:, 2].sub_(mean[2]).div_(std[2])
     return x
 
-
+'''
 def viz_slide(
     rgb: torch.Tensor,
     t_mid: np.ndarray,
@@ -533,6 +542,163 @@ def viz_slide(
 
     output_path = str(output_path)
     out_pth = output_path.replace('.gif', '.slide.gif')
+    imageio.mimwrite(out_pth, frames, fps=25, loop=0)
+    os.system('rm -rf frames/*.png')
+    msg = (f"Did not find a generated video at {out_pth}")
+    assert os.path.exists(out_pth), msg
+'''
+
+def viz_slide(
+    rgb: torch.Tensor,
+    t_mid: np.ndarray,
+    sim: np.ndarray,
+    similarity_thres: float,
+    keyword: str,
+    output_path: Path,
+    viz_with_dict: bool,
+    dict_video_path: str,
+    dict_video_ids: tuple,
+    target_versions: tuple = (3, 7),  # <-- YENİ: Ortak grafikte çizilecek versiyonların indeksleri (0=v1, 1=v2)
+):
+    viz_with_dict = 0
+    """
+    Save a visualization video for talks, rearranged version of the function viz_similarities above.
+    Plotted on a SINGLE combined graph.
+    """
+    F = 16  # num_in_frames
+    
+    # Kelime formatlama (uzun kelimeleri alt satıra geçirme)
+    keyword = list(keyword)
+    max_num_chars_per_line = 40
+    num_linebreaks = int(len(keyword) / max_num_chars_per_line)
+    for lb in range(num_linebreaks):
+        pos = (lb + 1) * max_num_chars_per_line
+        keyword.insert(pos, "\n")
+    keyword = "".join(keyword)
+    keyword = f"Keyword: {keyword}"
+    
+    num_frames = rgb.shape[1]
+    height = rgb.shape[2]
+    offset = height / 14
+    
+    # --- VERSİYON FİLTRELEME ---
+    total_available_versions = sim.shape[1]
+    valid_versions = [v for v in target_versions if v < total_available_versions]
+    
+    if not valid_versions:
+        print(f"Uyarı: İstenen versiyonlar bulunamadı. Sözlükte {total_available_versions} versiyon var. Varsayılanlar kullanılıyor.")
+        valid_versions = [0, min(1, total_available_versions - 1)]
+        
+    # Yalnızca seçilen versiyonları filtrele
+    sim = sim[:, valid_versions]
+    dict_video_ids = [dict_video_ids[v] for v in valid_versions]
+    num_versions_to_plot = len(valid_versions)
+    # ---------------------------
+    
+    # Düzen: Sadece 1 video (üst) ve 1 grafik (alt) olacak şekilde GridSpec
+    fig = plt.figure(figsize=(6, 5))
+    figw, figh = fig.get_size_inches() * fig.dpi
+    figw, figh = int(figw), int(figh)
+    
+    gs = gridspec.GridSpec(2, 1, height_ratios=[3, 1.5])
+    ax1 = plt.subplot(gs[0])
+    ax2 = plt.subplot(gs[1])  # Tek ve ortak grafik ekseni
+    
+    res = 256
+    stacked_dicts = np.zeros((num_versions_to_plot, res, res, 3))
+    
+    # Ortak grafiğe çizgileri (plot) ekleme
+    for i, v_orig_idx in enumerate(valid_versions):
+        dict_vid_id = dict_video_ids[i]
+        # Tableau renklerinden versiyona göre renk seç
+        dict_color = list(mcolors.TABLEAU_COLORS.values())[v_orig_idx % len(mcolors.TABLEAU_COLORS)]
+        
+        # Aynı ax2 eksenine çizgiyi ekle
+        ax2.plot(range(int(F / 2), int(F / 2) + sim.shape[0]), sim[:, i], color=dict_color, label=f"v{v_orig_idx + 1}")
+        
+        dict_frame = get_dictionary_frame(
+            dict_vid_id, dict_video_path, v=f"v{v_orig_idx + 1}", color=dict_color, res=res, rm_download=False
+        )
+        stacked_dicts[i] = dict_frame
+
+    # Ortak grafiğin sabit ayarları
+    ax2.set_xlabel("Time")
+    ax2.set_xlim(0, num_frames - 1)
+    ax2.set_ylim(sim.min(), sim.max() + 0.01)
+    ax2.legend(loc="upper right")
+    
+    # Grafiğin sağ ve üst çerçeve çizgilerini kaldır (daha temiz bir görünüm için)
+    ax2.spines["right"].set_visible(False)
+    ax2.spines["top"].set_visible(False)
+
+    if viz_with_dict:
+        dict_viz = np.vstack(stacked_dicts)
+        dh, dw, _ = dict_viz.shape
+        dh, dw = figh, int(figh * dw / dh)
+        dict_viz = cv2.resize(dict_viz, (dw, dh))
+    else:
+        dw = 0
+
+    print(f"Saving visualization to {output_path}")
+    frames = []
+    os.makedirs("frames", exist_ok=True)
+    
+    # Kare kare animasyon oluşturma
+    for t in tqdm(range(num_frames)):
+        img = cv2.resize(im_to_numpy(rgb[:, t]), (256, 256))
+        ax1.imshow(img)
+        ax1.set_title("Continuous input")
+        
+        t_ix = abs(t_mid - t).argmin()
+        
+        # O anki tüm versiyonların benzerlik skorlarını yan yana yazdır
+        sim_texts = []
+        for i, v_orig_idx in enumerate(valid_versions):
+            sim_texts.append(f"v{v_orig_idx + 1}: {sim[t_ix, i]:.2f}")
+        ax2.set_title(" | ".join(sim_texts), fontsize=10)
+        
+        # Animasyonlu dikey çizgi ve kayan pencere gölgesi
+        time_line = ax2.axvline(x=t_ix, color='gray', linestyle='--')
+        time_rect = ax2.add_patch(
+            patches.Rectangle((t_ix, ax2.get_ylim()[0]), F, np.diff(ax2.get_ylim())[0], alpha=0.3, color='gray')
+        )
+            
+        # Eğer herhangi bir versiyon eşiği geçerse işareti bulduk demektir
+        max_sim_t = max(sim[t_ix, :])
+        sim_color = "green" if max_sim_t >= similarity_thres else "red"
+        
+        if max_sim_t >= similarity_thres:
+            ax1.add_patch(
+                patches.Rectangle((0, 0), 256, 256, linewidth=10, edgecolor="g", facecolor="none")
+            )
+            
+        # Keyword etiketini videonun üzerine bas
+        ax1.text(
+            offset, 256, keyword, fontsize=12, fontweight="bold", color="white",
+            verticalalignment="top", bbox=dict(facecolor=sim_color, alpha=0.9),
+        )
+        ax1.axis("off")
+        
+        if t == 0:
+            plt.tight_layout()
+            
+        # Figürü görüntüye dönüştür
+        fig_img = fig2data(fig)
+        fig_img = np.array(Image.fromarray(fig_img))
+        if viz_with_dict:
+            fig_img = np.hstack((dict_viz, fig_img))
+        frames.append(fig_img[:, :, :].astype("uint8"))
+        
+        # Sonraki kareye geçmeden önce temizlik yap
+        ax1.clear()
+        time_line.remove()
+        time_rect.remove()
+
+    output_path = str(output_path)
+    # Çıktı ismine çizilen versiyonları dinamik olarak ekle (Örn: _v1_v2)
+    ver_str = "_".join([f"v{v+1}" for v in valid_versions])
+    out_pth = output_path.replace('.gif', f'_{ver_str}.slide.gif')
+    
     imageio.mimwrite(out_pth, frames, fps=25, loop=0)
     os.system('rm -rf frames/*.png')
     msg = (f"Did not find a generated video at {out_pth}")
