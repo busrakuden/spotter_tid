@@ -6,19 +6,25 @@ import pandas as pd
 from pathlib import Path
 
 import sys
-sys.path.append('/home/ks0085/Documents/notebooks/butid/helpers/bsldict')
-from demo.utils import load_model, prepare_input, load_rgb_video
+sys.path.append('./')
+sys.path.append('./../')
 
-tid = pd.read_csv('/home/ks0085/Documents/notebooks/butid/dictionary/dictionary.csv', dtype={'video_id': str})
-i3d = load_model('/home/ks0085/Documents/notebooks/butid/models/i3d/i3d_mlp.pth.tar', arch='i3d_mlp')
+from utils import load_model, prepare_input, load_rgb_video
+
+tid = pd.read_csv('../../data/dictionary.csv', dtype={'video_id': str})
+i3d = load_model('../../models/i3d/i3d_mlp.pth.tar', arch='i3d_mlp')
 
 # Device configuration
 # # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-device = torch.device('cpu')
+device = torch.device('cuda')
+print(f"✅ GPU bulundu ve aktif: {torch.cuda.get_device_name(0)}")
 i3d = i3d.to(device)
 i3d.eval()
 
 def extract_i3d_features(video_path, num_samples=20, middle_crop=0.1):
+    if isinstance(video_path, str): 
+        video_path = Path(video_path)
+
     video = load_rgb_video(video_path, fps=25)
     if middle_crop:
         # Find video length and remove 5% from start and end
@@ -29,7 +35,8 @@ def extract_i3d_features(video_path, num_samples=20, middle_crop=0.1):
         video = video[:, start:end, :, :]
         print(f"New video shape: {video.shape}")
         
-    video_id = video_path.split('/')[-1].replace('.gif', '')
+    #video_id = video_path.split('/')[-1].replace('.gif', '')
+    video_id = video_path.stem
     input_tensor = prepare_input(video) # Add batch dimension
     samples = []
     for _ in range(num_samples):
@@ -51,9 +58,9 @@ def extract_i3d_features(video_path, num_samples=20, middle_crop=0.1):
     
     
 SOURCE2PATH = { 
-    # 'tid_sozluk': '/home/ks0085/Documents/notebooks/butid/dictionary/rgb/tid_sozluk',
+    'tid_sozluk': '../../data/butid/dictionary/rgb/tid_sozluk',
     # 'isaretce': '/home/ks0085/Documents/notebooks/butid/dictionary/rgb/isaretce',
-    'afid': '/home/ks0085/Documents/notebooks/butid/dictionary/rgb/afid',
+    # 'afid': '/home/ks0085/Documents/notebooks/butid/dictionary/rgb/afid',
 }
 for source in tid['source'].unique():
     embeds, video_ids, gloss_list = [], [], []
@@ -77,12 +84,12 @@ for source in tid['source'].unique():
             glosses = np.array(gloss_list)
             ids = np.array(video_ids)
             
-            os.makedirs('/home/ks0085/Documents/notebooks/butid/dictionary/i3d', exist_ok=True)
+            os.makedirs('../../data/butid/dictionary/i3d', exist_ok=True)
 
             torch.save({
                 'embeddings': embeds,
                 'glosses': glosses,
                 'video_ids': ids
-            }, f'/home/ks0085/Documents/notebooks/butid/dictionary/i3d/{source}.i3d.pth')
+            }, f'../../data/butid/dictionary/i3d/{source}8.i3d.pth')
         except Exception as e:
             print(f"Error processing video {video_id}: {e}")
